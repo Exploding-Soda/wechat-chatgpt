@@ -1,45 +1,22 @@
-import fs from "fs";
-import path from "path";
-import { fileURLToPath } from "url";
-import { ChatCompletionRequestMessageRoleEnum } from "openai";
+import {
+  ChatCompletionRequestMessage,
+  ChatCompletionRequestMessageRoleEnum,
+} from "openai";
 import { User } from "./interface";
 import { isTokenOverLimit } from "./utils.js";
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-let DefaultPrompt =
-  "你是一名AI助手，尽可能解决用户问题";
+/**
+ * 使用内存作为数据库
+ */
 
-interface ChatCompletionRequestMessage {
-  role: ChatCompletionRequestMessageRoleEnum;
-  content: string;
-}
-
+let DefaultPrompt = "";
 class DB {
   private static data: User[] = [];
-  private static filePath = path.join(__dirname, "chatHistory.txt");
 
-  constructor() {
-    this.loadDataFromFile();
-  }
-
-  private loadDataFromFile(): void {
-    try {
-      console.log(
-        "@data.ts,loadDataFormFile()：已执行从txt文档中读取数据并转换成JSON格式"
-      );
-      const fileData = fs.readFileSync(DB.filePath, "utf-8");
-      const parsedData = fileData ? JSON.parse(fileData) : [];
-      DB.data = parsedData;
-    } catch (error) {
-      console.error(
-        "Failed to load data from file or JSON parsing error:",
-        error
-      );
-      DB.data = []; // 使用空数组作为默认值
-    }
-  }
-
+  /**
+   * 添加一个用户, 如果用户已存在则返回已存在的用户
+   * @param username
+   */
   public addUser(username: string): User {
     let existUser = DB.data.find((user) => user.username === username);
     if (existUser) {
@@ -56,15 +33,13 @@ class DB {
       ],
     };
     DB.data.push(newUser);
-    DB.saveToFile();
     return newUser;
   }
 
-  private static saveToFile(): void {
-    const dataToSave = JSON.stringify(DB.data, null, 2);
-    fs.writeFileSync(DB.filePath, dataToSave);
-  }
-
+  /**
+   * 根据用户名获取用户, 如果用户不存在则添加用户
+   * @param username
+   */
   public getUserByUsername(username: string): User {
     return (
       DB.data.find((user) => user.username === username) ||
@@ -72,49 +47,70 @@ class DB {
     );
   }
 
-  public getChatMessage(username: string): ChatCompletionRequestMessage[] {
-    const user = this.getUserByUsername(username);
-    return user ? user.chatMessage : [];
+  /**
+   * 获取用户的聊天记录
+   * @param username
+   */
+  public getChatMessage(username: string): Array<ChatCompletionRequestMessage> {
+    return this.getUserByUsername(username).chatMessage;
   }
 
+  /**
+   * 设置用户的prompt
+   * @param username
+   * @param prompt
+   */
   public setPrompt(username: string, prompt: string): void {
     const user = this.getUserByUsername(username);
     if (user) {
       user.chatMessage.find(
         (msg) => msg.role === ChatCompletionRequestMessageRoleEnum.System
       )!.content = prompt;
-      DB.saveToFile();
     }
   }
 
+  /**
+   * 添加用户输入的消息
+   * @param username
+   * @param message
+   */
   public addUserMessage(username: string, message: string): void {
     const user = this.getUserByUsername(username);
     if (user) {
       while (isTokenOverLimit(user.chatMessage)) {
+        // 删除从第2条开始的消息(因为第一条是prompt)
         user.chatMessage.splice(1, 1);
       }
       user.chatMessage.push({
         role: ChatCompletionRequestMessageRoleEnum.User,
         content: message,
       });
-      DB.saveToFile();
     }
   }
 
+  /**
+   * 添加ChatGPT的回复
+   * @param username
+   * @param message
+   */
   public addAssistantMessage(username: string, message: string): void {
     const user = this.getUserByUsername(username);
     if (user) {
       while (isTokenOverLimit(user.chatMessage)) {
+        // 删除从第2条开始的消息(因为第一条是prompt)
         user.chatMessage.splice(1, 1);
       }
       user.chatMessage.push({
         role: ChatCompletionRequestMessageRoleEnum.Assistant,
         content: message,
       });
-      DB.saveToFile();
     }
   }
 
+  /**
+   * 清空用户的聊天记录, 并将prompt设置为默认值
+   * @param username
+   */
   public clearHistory(username: string): void {
     const user = this.getUserByUsername(username);
     if (user) {
@@ -124,7 +120,6 @@ class DB {
           content: DefaultPrompt,
         },
       ];
-      DB.saveToFile();
     }
   }
 
@@ -132,6 +127,5 @@ class DB {
     return DB.data;
   }
 }
-
 const DBUtils = new DB();
 export default DBUtils;

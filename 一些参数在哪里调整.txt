@@ -1,0 +1,4 @@
+以下文件均在src里面：
+data.ts - 默认prompt的位置
+bot.ts - onGroupMessage() 群聊时，发消息的格式
+bot.ts - cleanMessage 清除消息的方法

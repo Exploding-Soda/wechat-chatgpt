@@ -10,9 +10,6 @@ import { FileBox } from "file-box";
 import { chatgpt, dalle, whisper } from "./openai.js";
 import DBUtils from "./data.js";
 import { regexpEncode } from "./utils.js";
-import * as fs from "fs/promises";
-import { stringify } from "uuid";
-
 enum MessageType {
   Unknown = 0,
   Attachment = 1, // Attach(6),
@@ -39,20 +36,7 @@ interface ICommand {
   description: string;
   exec: (talker: Speaker, text: string) => Promise<void>;
 }
-interface element {
-  name: string;
-  info: string;
-  prompt: string;
-}
-
 export class ChatGPTBot {
-  private greetingTimers = new Map<string, NodeJS.Timeout>();
-
-  private sendGreeting(talker: ContactInterface) {
-    // 发送问候消息的逻辑
-    this.onPrivateMessage(talker, "随便向我说我点什么");
-  }
-
   chatPrivateTriggerKeyword = config.chatPrivateTriggerKeyword;
   chatTriggerRule = config.chatTriggerRule
     ? new RegExp(config.chatTriggerRule)
@@ -76,19 +60,20 @@ export class ChatGPTBot {
   }
   private readonly commands: ICommand[] = [
     {
-      name: "list",
+      name: "help",
       description: "显示帮助信息",
       exec: async (talker) => {
         await this.trySay(
           talker,
           "========\n" +
-            "可用命令，请在前面加上/command \n" +
-            "help\n" +
-            "prompt <PROMPT>\n" +
-            "image <PROMPT>\n" +
-            "clear\n" +
-            "greeting\n" +
-            "persona (实用性存疑，搁置)\n" +
+            "/cmd help\n" +
+            "# 显示帮助信息\n" +
+            "/cmd prompt <PROMPT>\n" +
+            "# 设置当前会话的 prompt \n" +
+            "/img <PROMPT>\n" +
+            "# 根据 prompt 生成图片\n" +
+            "/cmd clear\n" +
+            "# 清除自上次启动以来的所有会话\n" +
             "========"
         );
       },
@@ -105,19 +90,6 @@ export class ChatGPTBot {
       },
     },
     {
-      name: "greeting",
-      description: "设置当前对话是否允许BOT时不时主动发消息",
-      exec: async (talker: Speaker, trueOrFalse: string) => {
-        if (trueOrFalse == "1" || trueOrFalse == "true") {
-          await talker.say("好哒，谢谢主人允许我打扰您，嘿嘿~\n");
-          // this.startRandomLoggingTimer(talker);
-        } else {
-          // this.stopRandomLoggingTimer();
-          await talker.say("好哒，我会安静地不打扰主人~\n");
-        }
-      },
-    },
-    {
       name: "clear",
       description: "清除自上次启动以来的所有会话",
       exec: async (talker) => {
@@ -125,43 +97,6 @@ export class ChatGPTBot {
           DBUtils.clearHistory(await talker.topic());
         } else {
           DBUtils.clearHistory(talker.name());
-        }
-      },
-    },
-    {
-      name: "persona",
-      description: "",
-      exec: async (talker, personaIndex: string) => {
-        try {
-          const data = await fs.readFile("./src/persona.json", "utf8");
-          const jsonData = JSON.parse(data);
-          let resArr = "";
-
-          jsonData.forEach((element: element, index: number) => {
-            resArr += `${index} - ${JSON.stringify(
-              element.name
-            )} : ${JSON.stringify(element.info)}\n\n`;
-          });
-
-          let tempIndex =
-            typeof personaIndex == "string"
-              ? personaIndex
-              : parseInt(personaIndex);
-          if (jsonData[tempIndex]) {
-            (await talker.say("有这个性格噢: " + jsonData[tempIndex].name)) +
-              "在这个性格下，我会...：\n" +
-              jsonData[tempIndex].info;
-            await talker.say(
-              "但是主人还没有做完这部分的功能，再等等吧，嘿嘿。"
-            );
-          } else {
-            await talker.say(
-              "command persona [序号] 可以操作我的人格 \n" + resArr
-            );
-          }
-        } catch (error) {
-          // 处理可能发生的错误
-          await talker.say(`Error reading persona.json: ${error}`);
         }
       },
     },
@@ -291,13 +226,6 @@ export class ChatGPTBot {
     );
   }
 
-  getRandomInt(min: number, max: number) {
-    // 确保最小值和最大值是整数
-    min = Math.ceil(min);
-    max = Math.floor(max);
-    return Math.floor(Math.random() * (max - min + 1)) + min;
-  }
-
   async onPrivateMessage(talker: ContactInterface, text: string) {
     const gptMessage = await this.getGPTMessage(talker.name(), text);
     await this.trySay(talker, gptMessage);
@@ -314,46 +242,6 @@ export class ChatGPTBot {
     // const result = `@${talker.name()} ${gptMessage}`;
     await this.trySay(room, result);
   }
-
-  async setHello(
-    talker: ContactInterface,
-    privateOrGroup: string,
-    room?: RoomInterface
-  ) {
-    // 未来可以加个Date来把时间告诉bot
-    const sayHiPrompt = "请向我打个招呼，分享你正在想什么，并且正在做什么。";
-    // 使用talker的name属性作为Map的键进行检查
-    const talkerName = talker.name();
-    if (room) {
-      console.log(room.id);
-    }
-    if (room && this.greetingTimers.has(room.id)) {
-      // 如果已经有一个定时器在运行，就不设置新的定时器
-      return;
-    } else if (this.greetingTimers.has(talkerName)) {
-      return;
-    }
-
-    // 设置一个新的定时器，并使用talker的name属性作为Map的键来存储
-    const timer = setTimeout(async () => {
-      if (privateOrGroup == "private") {
-        await this.onPrivateMessage(talker, sayHiPrompt);
-        return this.greetingTimers.delete(talker.name()); // 使用talker的name属性作为键来删除
-      } else if (privateOrGroup == "group" && room) {
-        await this.onGroupMessage(talker, sayHiPrompt, room);
-        return this.greetingTimers.delete(room.id); // 使用talker的name属性作为键来删除
-      }
-    }, this.getRandomInt(10 * 1000, 11 * 1000)); // 随机1-2后主动打招呼
-
-    if (room) {
-      // 存储定时器引用
-      this.greetingTimers.set(room.id, timer);
-    } else {
-      // 存储定时器引用
-      this.greetingTimers.set(talkerName, timer);
-    }
-  }
-
   async onMessage(message: Message) {
     const talker = message.talker();
     const rawText = message.text();
@@ -410,16 +298,12 @@ export class ChatGPTBot {
       }
       return;
     }
-    // 立刻让GPT回复的时候，如果没有旧计时器也增加一个计时器
-    // 下次就会在这个对话里主动发消息
     if (this.triggerGPTMessage(rawText, privateChat)) {
       const text = this.cleanMessage(rawText, privateChat);
       if (privateChat) {
-        this.setHello(talker, "private");
         return await this.onPrivateMessage(talker, text);
       } else {
         if (!this.disableGroupMessage) {
-          this.setHello(talker, "group", room);
           return await this.onGroupMessage(talker, text, room);
         } else {
           return;
